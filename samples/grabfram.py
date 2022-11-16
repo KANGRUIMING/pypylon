@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 # -*- coding: utf-8 -*-
 """
 Created on Thu Nov 10 16:44:18 2022

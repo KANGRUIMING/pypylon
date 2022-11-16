@@ -1,3 +1,4 @@
+
 import os
 import cv2
 import numpy as np
@@ -95,4 +96,3 @@ try:
 except genicam.GenericException as e:
     # Error handling
     print("An exception occurred.", e.GetDescription())
-    exitCode = 1

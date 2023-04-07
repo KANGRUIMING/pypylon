@@ -15,7 +15,7 @@ converter.OutputPixelFormat = pylon.PixelType_BGR8packed
 converter.OutputBitAlignment = pylon.OutputBitAlignment_MsbAligned
 
 waitTime = 1
-numFrames = 10
+numFrames = 25
 
 def save_image(camera, name):
     while camera.IsGrabbing():
@@ -28,7 +28,7 @@ def save_image(camera, name):
                     cv2.imwrite(name + '_' + str(x) + '.png', img)
                     x = x+1
             #print('waiting for ' + str(waitTime) + ' seconds')
-            #time.sleep(waitTime)
+            time.sleep(waitTime)
         break
                 
 if __name__ == '__main__':  
@@ -38,25 +38,34 @@ if __name__ == '__main__':
         
         camera1 = pylon.InstantCamera(tlFactory.CreateDevice(devices[0]))
         camera2 = pylon.InstantCamera(tlFactory.CreateDevice(devices[1]))
+        camera3 = pylon.InstantCamera(tlFactory.CreateDevice(devices[2]))
+        camera4 = pylon.InstantCamera(tlFactory.CreateDevice(devices[3]))
 
         camera1.Open()
         camera2.Open()
+        camera3.Open()
+        camera4.Open()
         
         
         camera1.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
         camera2.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+        camera3.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+        camera4.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
         
         t1 = threading.Thread(target=save_image, args=(camera1, 'cam#1'))
         t2 = threading.Thread(target=save_image, args=(camera2, 'cam#2'))
+        t3 = threading.Thread(target=save_image, args=(camera3, 'cam#3'))
+        t4 = threading.Thread(target=save_image, args=(camera4, 'cam#4'))
 
-
-
-        
         t1.start()
         t2.start()
+        t3.start()
+        t4.start()
         
         t1.join()
         t2.join()
+        t3.join()
+        t4.join()
         
         
     except genicam.GenericException as e:

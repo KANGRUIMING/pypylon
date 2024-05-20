@@ -1,6 +1,7 @@
 #!/usr/bin/env python
-from setuptools import setup, Extension
+from setuptools import setup, Extension, __version__ as setuptools_version
 from setuptools.command.build_ext import new_compiler
+from pkg_resources import parse_version
 from logging import info, warning, error
 
 import argparse
@@ -15,7 +16,17 @@ import subprocess
 import sys
 import platform
 from pathlib import Path
-import VersionInfo
+# The pylon version this source tree was designed for, by platform
+ReferencePylonVersion = {
+    "Windows": "7.4.0",
+    # ATTENTION: This version is the pylon core version reported by pylon-config,
+    # which is not equal to the version on the outer tar.gz
+    "Linux": "7.4.0",
+    "Linux_armv7l": "6.2.0",
+    "Darwin": "7.3.1",
+    "Darwin_arm64": "7.3.1"
+}
+
 
 ################################################################################
 
@@ -36,7 +47,11 @@ def get_platform():
     return platform.system()
 
 def get_machine():
-    return platform.machine()
+    if get_platform() == "Darwin" and "ARCHFLAGS" in os.environ:
+        # crossbuild settings: ARCHFLAGS="-arch arm64" or ARCHFLAGS="-arch x86_64"
+        return os.environ["ARCHFLAGS"].split()[1]
+    else:
+        return platform.machine()
 
 def rxglob(path, pattern, recursive=False):
     if isinstance(pattern, str):
@@ -69,7 +84,6 @@ class BuildSupport(object):
         "-Wextra",
         "-Wall",
         "-threads",
-        "-modern",
         #lots of debug output "-debug-tmsearch",
         ]
 
@@ -87,10 +101,15 @@ class BuildSupport(object):
         "camemu",
         "gentl",
         "extra",
+        "pylondataprocessing",
         "cxp",
         }
 
-    # --- Attributes to be set by init (may be platform specific ---
+    # Global switch to toggle pylon data processing support on or off
+    # If set to true the pylon used for building must support at least pylon data processing 1.3 (pylon 7.4+)
+    IncludePylonDataProcessing = True
+
+    # --- Attributes to be set by init (may be platform specific) ---
 
     # swig executable to be called
     SwigExe = None
@@ -115,8 +134,6 @@ class BuildSupport(object):
 
     def __init__(self):
         self.SwigExe = "swig"
-        if sys.version_info[0] == 3:
-            self.SwigOptions.append("-py3")
 
     def dump(self):
         for a in dir(self):
@@ -125,13 +142,19 @@ class BuildSupport(object):
     def find_swig(self):
         # Find SWIG executable
         swig_executable = None
-        for candidate in ["swig3.0", "swig"]:
-            swig_executable = shutil.which(candidate)
-            if self.is_supported_swig_version(swig_executable):
-                info("Found swig: %s" % (swig_executable,))
-                return swig_executable
+        # swig from pypi
+        try:
+            import swig
+            swig_executable = os.path.join(swig.BIN_DIR, "swig")
+        except ModuleNotFoundError:
+            # swig from path
+            swig_executable = shutil.which("swig")
 
-        raise RuntimeError("swig executable not found on path!")
+        if swig_executable and self.is_supported_swig_version(swig_executable):
+            info("Found swig: %s" % (swig_executable,))
+            return swig_executable
+        else:
+            raise RuntimeError("swig executable not found on path!")
 
     def is_supported_swig_version(self, swig_executable):
         if swig_executable is None:
@@ -149,10 +172,10 @@ class BuildSupport(object):
         if res is None:
             return False
 
-        if tuple(map(int, res.group(1).split('.'))) < (3, 0, 12):
+        if tuple(map(int, res.group(1).split('.'))) < (4, 0, 0):
             msg = (
                 "The version of swig is %s which is too old. " +
-                "Minimum required version is 3.0.12"
+                "Minimum required version is 4.0.0"
                 )
             warning(msg, res.group(1))
             return False
@@ -203,7 +226,7 @@ class BuildSupport(object):
             self.BinPath
             )
         package_dir = os.path.abspath(self.PackageDir)
-        for package in self.RuntimeDefaultDeploy:
+        for package in self.get_deploy_list():
             for src, dst in self.RuntimeFiles[package]:
                 dst = os.path.join(package_dir, dst)
                 if not os.path.exists(dst):
@@ -213,12 +236,12 @@ class BuildSupport(object):
                     print("Copy %s => %s" % (f, dst))
                     shutil.copy(f, dst)
             if package in self.RuntimeFolders:
-                for src, dst in self.RuntimeFolders[package]:
+                for src, dst, ignorepatterns in self.RuntimeFolders[package]:
                     dst = os.path.join(package_dir, dst)
                     src = os.path.join(runtime_dir, src)
                     shutil.rmtree(dst, ignore_errors=True)
-                    print("Copy tree %s => %s" % (src, dst))
-                    shutil.copytree(src, dst)
+                    print("Copy tree %s => %s (ignoring=%s)" % (src, dst, str(ignorepatterns)))
+                    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*ignorepatterns))
 
 
     def clean(self, mode, additional_dirs=None):
@@ -299,31 +322,37 @@ class BuildSupport(object):
         pylon_version_no_build = match.group(1)
         pylon_version_tag = match.group(2)
 
-        reference_version = VersionInfo.ReferencePylonVersion[get_platform()]
+        reference_version = ReferencePylonVersion[get_platform()]
 
         # check for a more specialized reference version
         platform_machine = get_platform() + "_" + get_machine()
-        if platform_machine in VersionInfo.ReferencePylonVersion:
-            reference_version = VersionInfo.ReferencePylonVersion[platform_machine]
+        if platform_machine in ReferencePylonVersion:
+            reference_version = ReferencePylonVersion[platform_machine]
 
         if (
             pylon_version_no_build == reference_version and
             pylon_version_tag == ''
             ):
-            return git_version
+            pypylon_version = git_version
+        else:
+            # Build is against a non-reference version of pylon.
+            # Se we add that info to the pypylon version.
 
-        # remove all characters forbidden in a local version
-        # (- and _ get normalized anyways)
-        pylon_version_tag_cleaned=re.sub(
-            r"[^a-zA-Z0-9\.-_]",
-            '',
-            pylon_version_tag
-            )
-        return "%s+pylon%s%s" % (
-            git_version,
-            pylon_version_no_build,
-            pylon_version_tag_cleaned
-            )
+            # Remove all characters forbidden in a local version
+            # (- and _ get normalized anyways)
+            pylon_version_tag_cleaned=re.sub(
+                r"[^a-zA-Z0-9\.-_]",
+                '',
+                pylon_version_tag
+                )
+            pypylon_version = "%s+pylon%s%s" % (
+                git_version,
+                pylon_version_no_build,
+                pylon_version_tag_cleaned
+                )
+            warning("pylon version differs from the reference version (got: %s, expected: %s)" % (pylon_version_no_build, reference_version))
+
+        return pypylon_version
 
     def get_short_version(self, version):
         return version.split('+')[0]
@@ -341,7 +370,7 @@ class BuildSupport(object):
 
     def get_package_data_files(self):
         # patterns for files in self.PackageDir
-        data_files = ["*.dll", "*.zip", "*.so", "*.so.*"]
+        data_files = ["*.dll", "*.zip", "*.so", "*.so.*", "*.sig"]
 
         # also add all files of any sub-directories recursively
         pdir = self.PackageDir
@@ -363,6 +392,21 @@ class BuildSupport(object):
         # take the leading numerals.
         parts[3] = re.search(r'\d+', parts[3]).group()
         return tuple(map(int, parts))
+        
+        
+    def include_pylon_data_processing(self):
+        # pylon Versions since 7.0 support data processing but the pypylon mapping has been introduced with 7.4.
+        # previous pylon versions are missing required header files used by pypylon
+        result = self.IncludePylonDataProcessing and self.get_pylon_version_tuple() >= (7, 4, 0, 0)
+        return result
+        
+    def get_deploy_list(self):
+        if self.include_pylon_data_processing():
+            return self.RuntimeDefaultDeploy
+        else:
+            result = self.RuntimeDefaultDeploy.copy()
+            result.remove("pylondataprocessing")
+            return result
 
 ################################################################################
 
@@ -401,6 +445,13 @@ class BuildSupportWindows(BuildSupport):
         "extra": [
             ("PylonGUI_*.dll", ""),
             ("PylonUtility_*.dll", ""),
+            ("PylonUtilityPcl_*.dll", ""),
+            ],
+
+        "pylondataprocessing": [
+            ("PylonDataProcessing_v*.dll", ""),
+            ("PylonDataProcessing_v*.sig", ""),
+            ("PylonDataProcessingCore_*.dll", ""),
             ],
 
         "gentl": [
@@ -412,22 +463,25 @@ class BuildSupportWindows(BuildSupport):
         }
 
     GENTL_CXP_PRODUCER_DIR = "pylonCXP"
+    PYLON_DATA_PROCESSING_VTOOLS_DIR = "pylonDataProcessingPlugins"
 
     RuntimeFolders = {
         "cxp": [
-            (GENTL_CXP_PRODUCER_DIR, GENTL_CXP_PRODUCER_DIR),
+            (GENTL_CXP_PRODUCER_DIR, GENTL_CXP_PRODUCER_DIR, ()),
+            ],
+        "pylondataprocessing": [
+            (PYLON_DATA_PROCESSING_VTOOLS_DIR, PYLON_DATA_PROCESSING_VTOOLS_DIR, ("*Editor*.dll",)),
             ],
         }
 
-    # Up to py 3.8 distutils (the one in lib as well as the one included in
-    # setuptools) did its own layman's qouting of commandline parameters, that
-    # had to be amended with a 'hack'. From 3.9 on quoting parameters is
-    # now left to subprocess, which does the right thing.
-    gentl_dir_fmt = (
-        r'L"%s\\bin"'
-        if sys.version_info >= (3, 8, 10) else
-        r'L\"%s\\bin\"'
+    # Old versions of distutils use a layman's qouting of commandline
+    # parameters, that has to be amended with a 'hack'. Newer and fixed
+    # distutils are used if either (py >= 3.9.0) or (setuptools >= 60.0.0)
+    correct_qouting = (
+        sys.version_info >= (3, 9, 0) or
+        parse_version(setuptools_version) >= parse_version("60.0.0")
         )
+    gentl_dir_fmt = r'L"%s\\bin"' if correct_qouting else r'L\"%s\\bin\"'
     DefineMacros = [
         ("UNICODE", None),
         ("_UNICODE", None),
@@ -580,6 +634,11 @@ class BuildSupportLinux(BuildSupport):
         'bin/pylon-config'
         )
 
+    PylonDataProcessingConfig = os.path.join(
+        os.getenv('PYLON_ROOT', '/opt/pylon'),
+        'bin/pylon-dataprocessing-config'
+        )
+
     DefineMacros = [
         ("SWIG_TYPE_TABLE", "pylon")
         ]
@@ -690,12 +749,25 @@ class BuildSupportLinux(BuildSupport):
             ],
         "extra": [
             (r"libpylonutility\.so\.\d+\.\d+", ""),
+            (r"libpylonutilitypcl\.so\.\d+\.\d+", ""),
             ],
         "gentl": [
             ("libpylon_TL_gtc\.so", ""),
             ],
+        "pylondataprocessing": [
+            (r"libPylonDataProcessing\.so\.\d+", ""),
+            ("libPylonDataProcessing.sig", ""),
+            (r"libPylonDataProcessingCore\.so\.\d+", ""),
+            ],
         }
-    RuntimeFolders = {}
+   
+    PYLON_DATA_PROCESSING_VTOOLS_DIR = "pylondataprocessingplugins"
+
+    RuntimeFolders = {
+        "pylondataprocessing": [
+            (PYLON_DATA_PROCESSING_VTOOLS_DIR, PYLON_DATA_PROCESSING_VTOOLS_DIR, ("*Editor*.so",)),
+            ],
+        }
 
     def __init__(self):
         super(BuildSupportLinux, self).__init__()
@@ -705,13 +777,26 @@ class BuildSupportLinux(BuildSupport):
 
         config_cflags = self.call_pylon_config("--cflags")
         self.ExtraCompileArgs.extend(config_cflags.split())
+        if self.include_pylon_data_processing():
+            config_cflags = self.call_pylon_dataprocessing_config("--cflags")
+            self.ExtraCompileArgs.extend(config_cflags.split())
+            self.ExtraCompileArgs = list(dict.fromkeys(self.ExtraCompileArgs)) #remove duplicates
         print("ExtraCompileArgs:", self.ExtraCompileArgs)
+
         config_libs = self.call_pylon_config("--libs")
         self.ExtraLinkArgs.extend(config_libs.split())
+        if self.include_pylon_data_processing():
+            config_libs = self.call_pylon_dataprocessing_config("--libs")
+            self.ExtraLinkArgs.extend(config_libs.split())
+            self.ExtraLinkArgs = list(dict.fromkeys(self.ExtraLinkArgs)) #remove duplicates
         print("ExtraLinkArgs:", self.ExtraLinkArgs)
 
         config_libdir = self.call_pylon_config("--libdir")
         self.LibraryDirs.extend(config_libdir.split())
+        if self.include_pylon_data_processing():
+            config_libdir = self.call_pylon_dataprocessing_config("--libdir")
+            self.LibraryDirs.extend(config_libdir.split())
+            self.LibraryDirs = list(dict.fromkeys(self.LibraryDirs)) #remove duplicates
         print("LibraryDirs:", self.LibraryDirs)
 
         # adjust runtime files according to pylon version
@@ -751,7 +836,7 @@ class BuildSupportLinux(BuildSupport):
 
     def copy_runtime(self):
         runtime_dir = self.call_pylon_config("--libdir")
-        for package in self.RuntimeDefaultDeploy:
+        for package in self.get_deploy_list():
             for src, dst in self.RuntimeFiles[package]:
                 full_dst = os.path.abspath(os.path.join(self.PackageDir, dst))
                 if not os.path.exists(full_dst):
@@ -763,9 +848,31 @@ class BuildSupportLinux(BuildSupport):
                     # we set it explicitly to clarify that we depend on
                     # following symlinks.
                     shutil.copy(str(f), full_dst, follow_symlinks=True)
+            if package in self.RuntimeFolders:
+               for src, dst, ignorepatterns in self.RuntimeFolders[package]:
+                    dst = os.path.join(self.PackageDir, dst)
+                    src = os.path.join(runtime_dir, src)
+                    shutil.rmtree(dst, ignore_errors=True)
+                    print("Copy tree %s => %s (ignoring=%s)" % (src, dst, str(ignorepatterns)))
+                    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*ignorepatterns))
 
     def call_pylon_config(self, *args):
         params = [self.PylonConfig]
+        params.extend(args)
+        try:
+            res = subprocess.check_output(params, universal_newlines=True)
+        except FileNotFoundError:
+            msg = (
+                "Couldn't find pylon. Please install pylon in /opt/pylon " +
+                "or tell us the installation location using the PYLON_ROOT " +
+                "env variable"
+                )
+            error(msg)
+            raise
+        return res.strip()
+
+    def call_pylon_dataprocessing_config(self, *args):
+        params = [self.PylonDataProcessingConfig]
         params.extend(args)
         try:
             res = subprocess.check_output(params, universal_newlines=True)
@@ -787,7 +894,9 @@ class BuildSupportLinux(BuildSupport):
 
 class BuildSupportMacOS(BuildSupport):
 
-    FrameworkPath = os.getenv('PYLON_ROOT', '/Library/Frameworks/')
+    FrameWorkPath_env = os.getenv('PYLON_FRAMEWORK_LOCATION', 'undef')
+
+    FrameworkPath = "/Library/Frameworks" if (FrameWorkPath_env=='undef' or FrameWorkPath_env=="") else FrameWorkPath_env
 
     FrameworkName = 'pylon.framework'
 
@@ -807,7 +916,8 @@ class BuildSupportMacOS(BuildSupport):
                        '-g0',
                        '-Wall',
                        '-O3',
-                       '-Wno-switch'
+                       '-Wno-switch',
+                       '-std=c++17'
                        ]
 
     ExtraLinkArgs = [
@@ -862,7 +972,7 @@ class BuildSupportMacOS(BuildSupport):
         except FileNotFoundError:
             msg = (
                 "Couldn't find pylon. Please install pylon in %s or tell us " +
-                "the installation location using the PYLON_ROOT environment " +
+                "the framwork search path of the pylon.framework using the PYLON_FRAMEWORK_LOCATION environment " +
                 "variable"
                 )
             error(msg, self.FrameworkPath)
@@ -903,8 +1013,18 @@ class BuildSupportMacOS(BuildSupport):
             shutil.copytree(
                 os.path.join(self.FrameworkPath, self.FrameworkName),
                 full_dst,
-                symlinks=True
+                symlinks=True,
+                ignore = shutil.ignore_patterns("*.h","CMake","Tools")
                 )
+            # cleanup double TL entries in pylon 6.2.0
+            if self.get_pylon_version() == "6.2.0.18677":
+                for p in Path(f"{full_dst}").glob("**/*TL*.so"):
+                    if re.match(".*TL_[a-z]+\.so", p.name):
+                        info(f"DELETE {p}")
+                        os.remove(p)
+                        
+    def include_pylon_data_processing(self):
+        return False
 
 ################################################################################
 ################################################################################
@@ -915,6 +1035,9 @@ if __name__ == "__main__":
     # Get a build support
     bs = BuildSupport.make()
     bs.dump()
+
+    # Determine if we have pylon data processing available on platform
+    includePylonDataProcessing = bs.include_pylon_data_processing()
 
     # Parse command line for extra arguments
     parser = argparse.ArgumentParser(
@@ -1002,6 +1125,14 @@ if __name__ == "__main__":
             args.skip_swig
             )
         print('\n')
+        if includePylonDataProcessing:
+            pylondataprocessing_wrapper_src = bs.call_swig(
+                "src/pylondataprocessing",
+                "pylondataprocessing.i",
+                version,
+                args.skip_swig
+                )
+            print('\n')
 
         if args.swig_only:
             print("Stopping after swig...")
@@ -1015,7 +1146,7 @@ if __name__ == "__main__":
 
     else:
         # mock to allow calling "--help" on setup
-        genicam_wrapper_src, pylon_wrapper_src = "", ""
+        genicam_wrapper_src, pylon_wrapper_src, pylondataprocessing_wrapper_src = "", "", ""
 
     # Define extensions
     genicam_ext = Extension(
@@ -1042,6 +1173,19 @@ if __name__ == "__main__":
         extra_link_args=bs.ExtraLinkArgs,
         )
     print('\n')
+    if includePylonDataProcessing:
+        pylondataprocessing_ext = Extension(
+            'pypylon._pylondataprocessing',
+            [pylondataprocessing_wrapper_src],
+            include_dirs=[
+                os.path.join(".", "src"), # for PyPortImpl.h
+                ],
+            library_dirs=bs.LibraryDirs,
+            define_macros=bs.DefineMacros,
+            extra_compile_args=bs.ExtraCompileArgs,
+            extra_link_args=bs.ExtraLinkArgs,
+            )
+        print('\n')
 
     with open("README.md", "r") as fh:
         long_description = fh.read()
@@ -1060,10 +1204,11 @@ if __name__ == "__main__":
         long_description=long_description,
         long_description_content_type='text/markdown',
         url="https://github.com/basler/pypylon",
-        ext_modules=[genicam_ext, pylon_ext],
-        test_suite='tests.all_emulated_tests',
+        ext_modules=[genicam_ext, pylon_ext, pylondataprocessing_ext] if includePylonDataProcessing else [genicam_ext, pylon_ext],
+        test_suite='tests.all_emulated_tests_with_pylondataprocessing' if includePylonDataProcessing else 'tests.all_emulated_tests',
         packages=["pypylon"],
         package_data={"pypylon": package_data_files },
+        license="Other/Proprietary License",
         classifiers=[
             # Proprietary license as the resulting install contains pylon which
             # is under the pylon license

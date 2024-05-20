@@ -1,6 +1,6 @@
-%define DOCSTRING
+%define GENICAM_DOCSTRING
 "
-Copyright (C) 2017-2018 Basler AG
+Copyright (C) 2017-2023 Basler AG
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
     1. Redistributions of source code must retain the above copyright notice,
@@ -25,7 +25,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 "
 %enddef
 
-%module(directors="1", package="pypylon", docstring=DOCSTRING) genicam
+%module(directors="1", package="pypylon", docstring=GENICAM_DOCSTRING) genicam
 %include "DoxyGenApi.i";
 %begin %{
 
@@ -64,6 +64,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %include "std_vector.i"
 %include "cstring.i"
 %include "std_ios.i"
+%include "std_container.i"
 %include "exception.i"
 %include "pybuffer.i"
 
@@ -261,6 +262,10 @@ typedef unsigned long long int  uintmax_t;
 #define MODULE_NAME _genicam
 %include "GCException.i"
 #undef MODULE_NAME
+
+%pythoncode %{
+import warnings
+%}
 
 %typemap(in) (uint8_t *pBuffer, int64_t Length), (void *pBuffer, int64_t Length), (char *pBuffer, int64_t Length)
 {
@@ -692,7 +697,7 @@ namespace GENICAM_NAMESPACE {
 }
 
 %typemap(argout) (GENAPI_NAMESPACE::SingleChunkData_t *ChunkData, int64_t NumChunks) {
-    delete $1;
+    delete[] $1;
 }
 
 %typemap(in) (GENAPI_NAMESPACE::SingleChunkDataStr_t *ChunkData, int64_t NumChunks) {
@@ -713,7 +718,7 @@ namespace GENICAM_NAMESPACE {
 }
 
 %typemap(argout) (GENAPI_NAMESPACE::SingleChunkDataStr_t *ChunkData, int64_t NumChunks) {
-    delete $1;
+    delete[] $1;
 }
 
 

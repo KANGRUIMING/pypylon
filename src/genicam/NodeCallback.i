@@ -164,10 +164,8 @@ namespace GENAPI_NAMESPACE
         $1 = $input;
     }
 
-    // we don't need the baseclass here
-    %warnfilter(401) PyNodeCallback;
 
-    class PyNodeCallback: public CNodeCallback
+    class PyNodeCallback
     {
     public:
         PyNodeCallback( INode *pNode, PyObject *PyFunc, ECallbackType CallbackType);
@@ -192,3 +190,4 @@ namespace GENAPI_NAMESPACE
 
 
 }
+

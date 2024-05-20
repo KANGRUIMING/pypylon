@@ -3,37 +3,6 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// DeviceInfoList output for EnumerateAllDevices
-//
-
-%typemap(in, numinputs=0) (Pylon::DeviceInfoList_t&, bool addToList)
-{
-    $1 = new Pylon::DeviceInfoList_t();
-    $2 = false;
-}
-
-%typemap(argout, fragment="t_output_helper") Pylon::DeviceInfoList_t&
-{
-  Py_DECREF($result);
-  PyObject *tpl = PyTuple_New($1->size());
-  for (unsigned int i = 0; i < $1->size(); i++) {
-    CDeviceInfo *di = new CDeviceInfo((*$1)[i]);
-    PyObject *item = SWIG_NewPointerObj(
-        SWIG_as_voidptr(di),
-        SWIGTYPE_p_Pylon__CDeviceInfo,
-        SWIG_POINTER_OWN
-        );
-    PyTuple_SetItem(tpl, i, item);
-  }
-  $result = tpl;
-  delete $1;
-}
-
-// ensure the above typemap will not be applied to const references
-%typemap(argout, noblock=1) const Pylon::DeviceInfoList_t & {}
-
-////////////////////////////////////////////////////////////////////////////////
-//
 // CDeviceInfo output for AnnounceRemoteDevice
 //
 
@@ -206,12 +175,16 @@
     $1 = PyInt_Check($input) ? 1 : 0;
 }
 
+%typemap(arginit, noblock=1)
+(uint32_t *pNumResults, Pylon::GigEActionCommandResult *results)
+{
+   uint32_t num_res_u32 = 0;
+   unsigned long num_res_ul = 0;
+}
 
 %typemap(in, numinputs=1, noblock=1)
 (uint32_t *pNumResults, Pylon::GigEActionCommandResult *results)
 {
-    uint32_t num_res_u32;
-    unsigned long num_res_ul;
     bool ok;
     ok  = SWIG_IsOK(SWIG_AsVal_unsigned_SS_long($input, &num_res_ul));
     num_res_u32 = static_cast<uint32_t>(num_res_ul);
@@ -227,7 +200,7 @@
 %typemap(freearg, numinputs=1)
 (uint32_t *pNumResults, Pylon::GigEActionCommandResult *results)
 {
-    delete $2;
+    delete[] $2;
 }
 
 

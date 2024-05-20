@@ -1,6 +1,6 @@
-%define DOCSTRING
+%define PYLON_DOCSTRING
 "
-Copyright (C) 2017-2018 Basler AG
+Copyright (C) 2017-2023 Basler AG
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
     1. Redistributions of source code must retain the above copyright notice,
@@ -25,7 +25,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 "
 %enddef
 
-%module(directors="1", package="pypylon", docstring=DOCSTRING) pylon
+%module(directors="1", package="pypylon", docstring=PYLON_DOCSTRING) pylon
 %include "DoxyPylon.i";
 %begin %{
 // allow debug builds of genicam wrapper against release build of python
@@ -58,12 +58,8 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # endif
 %}
 
-%include "exception.i"
-
-// PylonIncludes.h will include DeviceFactory.h. We want to ignore
-// IDeviceFactory that is declared there.
-%ignore IDeviceFactory;
-
+%include <exception.i>
+%include <std_container.i>
 
 %{
 
@@ -72,6 +68,23 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // python defines own version of COMPILER macro which collides with genicam logic
 #define _PYTHON_COMPILER COMPILER
 #undef COMPILER
+
+#ifdef _MSC_VER  // MSVC
+#  pragma warning(push)
+#  pragma warning(disable : 4265)
+#elif __GNUC__  // GCC, CLANG, MinGW
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+#  pragma GCC diagnostic ignored "-Woverloaded-virtual"
+#  pragma GCC diagnostic ignored "-Wunused-variable"
+#  ifdef __clang__
+#    pragma GCC diagnostic ignored "-Wunknown-warning-option"
+#    pragma GCC diagnostic ignored "-Wc++11-extensions"
+#  endif
+#endif
+
+
+
 #include <pylon/PylonIncludes.h>
 #include <pylon/gige/GigETransportLayer.h>
 #include <pylon/gige/ActionTriggerConfiguration.h>
@@ -89,6 +102,12 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <GenApi/EventAdapterGeneric.h>
 #include <GenApi/EventAdapterGEV.h>
 #include "genicam/PyPortImpl.h"
+
+#ifdef _MSC_VER  // MSVC
+#  pragma warning(pop)
+#elif __GNUC__  // GCC, CLANG, MinWG
+#  pragma GCC diagnostic pop
+#endif
 
 #define COMPILER _PYTHON_COMPILER
 #undef _PYTHON_COMPILER
@@ -231,7 +250,7 @@ static void FixPylonDllLoadingIfNecessary()
     catch (Pylon::GenericException&)
     {
         // Ignore failure of enumerating TLs and carry on loading this
-        // module. The user will notice later if he doesn't find any cameras.
+        // module. The user will notice later if he doesn´t find any cameras.
     }
 
     // restore p_Previous_PATH
@@ -362,6 +381,10 @@ static void ExtendGenTLPathForCXP()
 
     Pylon::PylonInitialize();
 
+    // register PylonTerminate on interpreter shutdown
+    auto pylon_terminate = [](){ Pylon::PylonTerminate(true);};
+    Py_AtExit( pylon_terminate );
+
 #if NEED_PYLON_DLL_WORKAROUND
     FixPylonDllLoadingIfNecessary();
 #endif
@@ -410,6 +433,7 @@ try:
 except:
   pass
 
+import warnings
 def needs_numpy(func):
  def func_wrapper(*args, **kwargs):
     e = None
@@ -652,6 +676,7 @@ const Pylon::StringList_t & (Pylon::StringList_t str_list)
 // in all the places where pylon uses 'GenApi'.
 #define GenApi GENAPI_NAMESPACE
 
+%include "PylonVersionInfo.i"
 %include "TypeMappings.i"
 %include "Container.i"
 %include "PixelType.i"

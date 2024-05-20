@@ -1,11 +1,53 @@
-Version ?.?.?
-    - Date ????-??-??
+Version 3.0.1
+    - Date 2023-12-15
+    - add issue templates and links to Basler docs and pypylon samples
+    - Fix calling of PylonTerminate at module exit
+
+ Version 3.0.0
+    - Date 2023-11-09
+    - Updated to pylon 7.4 on linux and windows
+    - Add support for pylon Data Processing and vTools
+    - Linux (64bit) binaries are now manylinux_2_31 compliant and therefore
+      require glibc >= 2.31
+    - Deprecate the direct feature assignment style, e.g cam.Gain = 42
+      in favor of e.g. cam.Gain.Value = 42 to allow typing support
+    - Adjust all code examples and tests to use property access for 
+      features e.g. cam.Gain.Value, cam.Gain.Min, cam.Gain.Max ...
+    - Update reference version of macOS intel builds
+    - Moved windows builds to GitHub actions
+    - Update README.md
+
+Version 2.3.0
+    - Date 2023-09-01
+    - Add binding for VersionInfo
+    - Add bindings to device factory methods on transport layers
+    - Fix usage of Exception.GetDescription() in the samples
+
+Version 2.2.0
+    - Date 2023-06-14
+    - Integrate macos build for arm64
+    - Fix memory leak if ImageDecompressor is called on invalid data
+    - Call Pylon::PylonTerminate on module unload to free pylon ressources
+    - Fix Warnings from swig and c++ compile steps
+    - Add support for swig installed via pypi
+    - move tests to pytest format
+
+Version 2.0.0
+    - Date 2023-05-24
+    - Updated to pylon 7.2 on linux and windows
+    - Dropped support for python 3.4 and 3.5 on linux
+    - Linux binaries are now manylinux_2_28 compliant and therefore 
+      require glibc >= 2.28
+
+Version 1.9.0
+    - Date 2023-02-07
     - Reduced the number of the python versions that are used for CI on
       Windows: Dropped 3.4 and 3.5 completely and the 32 bit builds of the
       remaining versions.
     - Added support for pixel formats Bayer**16 in GetArray()
     - Fixed decoding problems when detecting MSVC version.
     - Added CI builds for python 3.11
+    - Fixed memory leak in ImageDecompressor
 
 Version 1.8.0
     - Date 2022-02-14
